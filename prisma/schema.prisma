@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Firm {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  status      String    @default("active")
+  slaProfile  Json?     @map("sla_profile")
+  timezone    String    @default("America/Los_Angeles")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  archivedAt  DateTime? @map("archived_at")
+
+  memberships   FirmMembership[]
+  cases         Case[]
+  requests      Request[]
+  notifications Notification[]
+  files         File[]
+  fileLinks     FileLink[]
+  drafts        Draft[]
+
+  @@map("firms")
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  authId       String    @unique @map("auth_id")
+  email        String    @unique
+  fullName     String    @map("full_name")
+  phone        String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastActiveAt DateTime? @map("last_active_at")
+  archivedAt   DateTime? @map("archived_at")
+
+  memberships   FirmMembership[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model FirmMembership {
+  id         String    @id @default(uuid()) @db.Uuid
+  firmId     String    @map("firm_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  role       String
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  archivedAt DateTime? @map("archived_at")
+
+  firm       Firm      @relation(fields: [firmId], references: [id])
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@unique([firmId, userId])
+  @@map("firm_memberships")
+}
+
+model Case {
+  id                String    @id @default(uuid()) @db.Uuid
+  firmId            String    @map("firm_id") @db.Uuid
+  matterNumber      String    @unique @map("matter_number")
+  clientName        String    @map("client_name")
+  caseType          String    @map("case_type")
+  jurisdiction      String    @default("CA")
+  phase             String    @default("intake")
+  status            String    @default("active")
+  readinessScore    Int       @default(0) @map("readiness_score")
+  healthSummary     String?   @map("health_summary")
+  assignedCwUserId  String?   @map("assigned_cw_user_id") @db.Uuid
+  primaryAttorneyId String?   @map("primary_attorney_id") @db.Uuid
+  openedDate        DateTime  @default(now()) @map("opened_date") @db.Date
+  priority          String    @default("normal")
+  notes             String?
+  createdAt         DateTime  @default(now()) @map("created_at")
+  archivedAt        DateTime? @map("archived_at")
+
+  firm     Firm      @relation(fields: [firmId], references: [id])
+  requests Request[]
+  drafts   Draft[]
+
+  @@index([firmId])
+  @@index([firmId, status])
+  @@map("cases")
+}
+
+model Request {
+  id          String    @id @default(uuid()) @db.Uuid
+  firmId      String    @map("firm_id") @db.Uuid
+  caseId      String?   @map("case_id") @db.Uuid
+  createdBy   String    @map("created_by") @db.Uuid
+  assignedTo  String?   @map("assigned_to") @db.Uuid
+  subject     String
+  requestType String    @default("general") @map("request_type")
+  status      String    @default("open")
+  slaDueAt    DateTime? @map("sla_due_at")
+  eta         DateTime?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  closedAt    DateTime? @map("closed_at")
+
+  firm     Firm             @relation(fields: [firmId], references: [id])
+  case     Case?            @relation(fields: [caseId], references: [id])
+  messages RequestMessage[]
+  drafts   Draft[]
+
+  @@index([firmId])
+  @@index([firmId, status])
+  @@map("requests")
+}
+
+model RequestMessage {
+  id              String   @id @default(uuid()) @db.Uuid
+  requestId       String   @map("request_id") @db.Uuid
+  firmId          String   @map("firm_id") @db.Uuid
+  senderId        String?  @map("sender_id") @db.Uuid
+  senderType      String   @map("sender_type")
+  body            String
+  isDraftDelivery Boolean  @default(false) @map("is_draft_delivery")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  request Request @relation(fields: [requestId], references: [id])
+
+  @@index([requestId])
+  @@map("request_messages")
+}
+
+model Notification {
+  id         String    @id @default(uuid()) @db.Uuid
+  firmId     String?   @map("firm_id") @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  type       String
+  title      String
+  body       String
+  entityType String?   @map("entity_type")
+  entityId   String?   @map("entity_id") @db.Uuid
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  firm Firm? @relation(fields: [firmId], references: [id])
+  user User  @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model File {
+  id           String    @id @default(uuid()) @db.Uuid
+  firmId       String    @map("firm_id") @db.Uuid
+  uploadedBy   String?   @map("uploaded_by") @db.Uuid
+  originalName String    @map("original_name")
+  storageKey   String    @unique @map("storage_key")
+  mimeType     String    @map("mime_type")
+  sizeBytes    BigInt    @map("size_bytes")
+  documentType String    @default("other") @map("document_type")
+  status       String    @default("pending")
+  reviewStatus String    @default("unreviewed") @map("review_status")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  archivedAt   DateTime? @map("archived_at")
+
+  firm   Firm       @relation(fields: [firmId], references: [id])
+  links  FileLink[]
+  drafts Draft[]
+
+  @@index([firmId])
+  @@index([firmId, documentType])
+  @@map("files")
+}
+
+model FileLink {
+  id         String   @id @default(uuid()) @db.Uuid
+  firmId     String   @map("firm_id") @db.Uuid
+  fileId     String   @map("file_id") @db.Uuid
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  firm Firm @relation(fields: [firmId], references: [id])
+  file File @relation(fields: [fileId], references: [id])
+
+  @@unique([fileId, entityType, entityId])
+  @@index([firmId, entityType, entityId])
+  @@map("file_links")
+}
+
+// ─── DRAFTS ───────────────────────────────────────────────────────────────────
+// Formal deliverables from CounselWorks to the attorney.
+// Non-negotiable: delivered requires approved_by (enforced at DB and app layer).
+// label_text is fixed — enforced by DB CHECK constraint.
+model Draft {
+  id            String    @id @default(uuid()) @db.Uuid
+  firmId        String    @map("firm_id") @db.Uuid
+  caseId        String    @map("case_id") @db.Uuid
+  requestId     String?   @map("request_id") @db.Uuid
+  fileId        String?   @map("file_id") @db.Uuid
+  draftType     String    @map("draft_type")
+  version       Int       @default(1)
+  status        String    @default("drafted")
+  labelText     String    @default("DRAFT — PREPARED FOR ATTORNEY REVIEW ONLY. NOT LEGAL ADVICE.") @map("label_text")
+  generatedByAi Boolean   @default(false) @map("generated_by_ai")
+  reviewedBy    String?   @map("reviewed_by") @db.Uuid
+  approvedBy    String?   @map("approved_by") @db.Uuid
+  notes         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  deliveredAt   DateTime? @map("delivered_at")
+  archivedAt    DateTime? @map("archived_at")
+
+  firm    Firm     @relation(fields: [firmId], references: [id])
+  case    Case     @relation(fields: [caseId], references: [id])
+  request Request? @relation(fields: [requestId], references: [id])
+  file    File?    @relation(fields: [fileId], references: [id])
+
+  @@index([firmId])
+  @@index([firmId, status])
+  @@index([caseId])
+  @@map("drafts")
+}
+
+model ActivityLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  firmId       String?  @map("firm_id") @db.Uuid
+  actorId      String?  @map("actor_id") @db.Uuid
+  actorType    String   @map("actor_type")
+  entityType   String   @map("entity_type")
+  entityId     String   @map("entity_id") @db.Uuid
+  activityType String   @map("activity_type")
+  description  String
+  ipAddress    String?  @map("ip_address")
+  metadata     Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([firmId])
+  @@index([entityType, entityId])
+  @@map("activity_log")
+}
+
+// ─── REFRESH TOKENS ───────────────────────────────────────────────────────────
+// One row per active session. Raw token never stored — only bcrypt hash.
+// Deleted on logout. Rotated on every refresh (old row deleted, new row inserted).
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @map("token_hash")   // bcrypt hash — never the raw token
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
