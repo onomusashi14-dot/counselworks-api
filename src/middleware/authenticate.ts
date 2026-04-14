@@ -23,6 +23,33 @@ export async function authenticate(
   res: Response,
   next: NextFunction
 ): Promise<void> {
+  // ─── DEV-ONLY AUTO-LOGIN ────────────────────────────────────────────────────
+  // When DEV_AUTO_USER_ID is set AND NODE_ENV !== 'production', skip JWT
+  // verification and attach the specified user to the request. This exists
+  // solely so the frontend dev server can talk to the API without a real
+  // Supabase session. It is inert in production.
+  if (
+    process.env.DEV_AUTO_USER_ID &&
+    process.env.NODE_ENV !== 'production'
+  ) {
+    const devUser = await prisma.user.findUnique({
+      where: { id: process.env.DEV_AUTO_USER_ID },
+      select: { id: true, authId: true, email: true, fullName: true, archivedAt: true },
+    });
+    if (devUser && devUser.archivedAt === null) {
+      req.user = {
+        id: devUser.id,
+        authId: devUser.authId,
+        email: devUser.email,
+        fullName: devUser.fullName,
+      } satisfies AuthenticatedUser;
+      prisma.user
+        .update({ where: { id: devUser.id }, data: { lastActiveAt: new Date() } })
+        .catch(() => {});
+      return next();
+    }
+  }
+
   // 1. Try Authorization: Bearer header first (cross-domain friendly)
   // 2. Fall back to httpOnly cookie (same-domain / legacy)
   let token: string | undefined;

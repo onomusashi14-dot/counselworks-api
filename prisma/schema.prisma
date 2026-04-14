@@ -8,6 +8,8 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// Canonical: LawFirm (Prompt 2 spec §5.2)
+// Prisma model name kept as Firm to preserve existing prisma.firm.* call sites.
 model Firm {
   id          String    @id @default(uuid()) @db.Uuid
   name        String
@@ -18,29 +20,44 @@ model Firm {
   createdAt   DateTime  @default(now()) @map("created_at")
   archivedAt  DateTime? @map("archived_at")
 
-  memberships   FirmMembership[]
-  cases         Case[]
-  requests      Request[]
-  notifications Notification[]
-  files         File[]
-  fileLinks     FileLink[]
-  drafts        Draft[]
+  memberships          FirmMembership[]
+  cases                Case[]
+  requests             Request[]
+  notifications        Notification[]
+  files                File[]
+  fileLinks            FileLink[]
+  drafts               Draft[]
+  // Portal additions
+  clients              Client[]
+  slaProfiles          SLAProfile[]
+  callLogs             CallLog[]
+  leads                Lead[]
+  handoffEvents        HandoffEvent[]
+  tasks                Task[]
+  medicalRecordRequests MedicalRecordRequest[]
+  checklistItems       ChecklistItem[]
+  firmAssignments      FirmAssignment[]
 
   @@map("firms")
 }
 
+// Canonical: CounselWorksUser + FirmUser unified via user_kind (Prompt 2 spec §5.1)
+// user_kind discriminates: 'firm' (attorneys/paralegals at client firms) or 'cw' (CounselWorks internal staff).
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  authId       String    @unique @map("auth_id")
-  email        String    @unique
-  fullName     String    @map("full_name")
-  phone        String?
-  createdAt    DateTime  @default(now()) @map("created_at")
-  lastActiveAt DateTime? @map("last_active_at")
-  archivedAt   DateTime? @map("archived_at")
+  id            String    @id @default(uuid()) @db.Uuid
+  authId        String    @unique @map("auth_id")
+  email         String    @unique
+  fullName      String    @map("full_name")
+  phone         String?
+  userKind      String    @default("firm") @map("user_kind")
+  internalRole  String?   @map("internal_role")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastActiveAt  DateTime? @map("last_active_at")
+  archivedAt    DateTime? @map("archived_at")
 
-  memberships   FirmMembership[]
-  notifications Notification[]
+  memberships     FirmMembership[]
+  notifications   Notification[]
+  firmAssignments FirmAssignment[]
 
   @@map("users")
 }
@@ -66,12 +83,19 @@ model Case {
   firmId            String    @map("firm_id") @db.Uuid
   matterNumber      String    @unique @map("matter_number")
   clientName        String    @map("client_name")
+  caseName          String?   @map("case_name")
+  clientId          String?   @map("client_id") @db.Uuid
+  slaProfileId      String?   @map("sla_profile_id") @db.Uuid
   caseType          String    @map("case_type")
   jurisdiction      String    @default("CA")
   phase             String    @default("intake")
   status            String    @default("active")
+  healthStatus      String    @default("on_track") @map("health_status")
   readinessScore    Int       @default(0) @map("readiness_score")
   healthSummary     String?   @map("health_summary")
+  nextAction        String?   @map("next_action")
+  nextActionDueAt   DateTime? @map("next_action_due_at")
+  lastActivityAt    DateTime? @map("last_activity_at")
   assignedCwUserId  String?   @map("assigned_cw_user_id") @db.Uuid
   primaryAttorneyId String?   @map("primary_attorney_id") @db.Uuid
   openedDate        DateTime  @default(now()) @map("opened_date") @db.Date
@@ -80,48 +104,72 @@ model Case {
   createdAt         DateTime  @default(now()) @map("created_at")
   archivedAt        DateTime? @map("archived_at")
 
-  firm     Firm      @relation(fields: [firmId], references: [id])
-  requests Request[]
-  drafts   Draft[]
+  firm                  Firm                   @relation(fields: [firmId], references: [id])
+  client                Client?                @relation(fields: [clientId], references: [id])
+  slaProfileRef         SLAProfile?            @relation(fields: [slaProfileId], references: [id])
+  requests              Request[]
+  drafts                Draft[]
+  files                 File[]
+  tasks                 Task[]
+  handoffEvents         HandoffEvent[]
+  medicalRecordRequests MedicalRecordRequest[]
+  checklistItems        ChecklistItem[]
+  convertedFromLeads    Lead[]
 
   @@index([firmId])
   @@index([firmId, status])
+  @@index([firmId, healthStatus])
+  @@index([clientId])
+  @@index([firmId, lastActivityAt])
   @@map("cases")
 }
 
+// Canonical: RequestThread (Prompt 2 spec §5.6)
+// Prisma model name kept as Request to preserve existing prisma.request.* call sites.
 model Request {
-  id          String    @id @default(uuid()) @db.Uuid
-  firmId      String    @map("firm_id") @db.Uuid
-  caseId      String?   @map("case_id") @db.Uuid
-  createdBy   String    @map("created_by") @db.Uuid
-  assignedTo  String?   @map("assigned_to") @db.Uuid
-  subject     String
-  requestType String    @default("general") @map("request_type")
-  status      String    @default("open")
-  slaDueAt    DateTime? @map("sla_due_at")
-  eta         DateTime?
-  createdAt   DateTime  @default(now()) @map("created_at")
-  closedAt    DateTime? @map("closed_at")
+  id            String    @id @default(uuid()) @db.Uuid
+  firmId        String    @map("firm_id") @db.Uuid
+  caseId        String?   @map("case_id") @db.Uuid
+  createdBy     String    @map("created_by") @db.Uuid
+  assignedTo    String?   @map("assigned_to") @db.Uuid
+  subject       String
+  requestType   String    @default("general") @map("request_type")
+  threadKind    String    @default("general") @map("thread_kind")
+  priority      String    @default("normal")
+  status        String    @default("open")
+  slaDueAt      DateTime? @map("sla_due_at")
+  eta           DateTime?
+  lastMessageAt DateTime? @map("last_message_at")
+  resolvedBy    String?   @map("resolved_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at")
+  closedAt      DateTime? @map("closed_at")
 
   firm     Firm             @relation(fields: [firmId], references: [id])
   case     Case?            @relation(fields: [caseId], references: [id])
   messages RequestMessage[]
   drafts   Draft[]
+  tasks    Task[]
 
   @@index([firmId])
   @@index([firmId, status])
+  @@index([firmId, lastMessageAt])
   @@map("requests")
 }
 
+// Canonical: ThreadMessage (Prompt 2 spec §5.7)
+// Prisma model name kept as RequestMessage to preserve existing call sites.
 model RequestMessage {
-  id              String   @id @default(uuid()) @db.Uuid
-  requestId       String   @map("request_id") @db.Uuid
-  firmId          String   @map("firm_id") @db.Uuid
-  senderId        String?  @map("sender_id") @db.Uuid
-  senderType      String   @map("sender_type")
+  id              String    @id @default(uuid()) @db.Uuid
+  requestId       String    @map("request_id") @db.Uuid
+  firmId          String    @map("firm_id") @db.Uuid
+  senderId        String?   @map("sender_id") @db.Uuid
+  senderType      String    @map("sender_type")
+  messageKind     String    @default("message") @map("message_kind")
   body            String
-  isDraftDelivery Boolean  @default(false) @map("is_draft_delivery")
-  createdAt       DateTime @default(now()) @map("created_at")
+  attachments     Json?
+  isDraftDelivery Boolean   @default(false) @map("is_draft_delivery")
+  readAt          DateTime? @map("read_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   request Request @relation(fields: [requestId], references: [id])
 
@@ -148,26 +196,37 @@ model Notification {
   @@map("notifications")
 }
 
+// Canonical: Document (Prompt 2 spec §5.8)
+// Prisma model name kept as File to preserve existing prisma.file.* call sites.
 model File {
-  id           String    @id @default(uuid()) @db.Uuid
-  firmId       String    @map("firm_id") @db.Uuid
-  uploadedBy   String?   @map("uploaded_by") @db.Uuid
-  originalName String    @map("original_name")
-  storageKey   String    @unique @map("storage_key")
-  mimeType     String    @map("mime_type")
-  sizeBytes    BigInt    @map("size_bytes")
-  documentType String    @default("other") @map("document_type")
-  status       String    @default("pending")
-  reviewStatus String    @default("unreviewed") @map("review_status")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  archivedAt   DateTime? @map("archived_at")
+  id                         String    @id @default(uuid()) @db.Uuid
+  firmId                     String    @map("firm_id") @db.Uuid
+  caseId                     String?   @map("case_id") @db.Uuid
+  uploadedBy                 String?   @map("uploaded_by") @db.Uuid
+  originalName               String    @map("original_name")
+  storageKey                 String    @unique @map("storage_key")
+  mimeType                   String    @map("mime_type")
+  sizeBytes                  BigInt    @map("size_bytes")
+  documentType               String    @default("other") @map("document_type")
+  category                   String?
+  status                     String    @default("pending")
+  reviewStatus               String    @default("unreviewed") @map("review_status")
+  receivedFrom               String?   @map("received_from")
+  missingFromChecklistItemId String?   @map("missing_from_checklist_item_id") @db.Uuid
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  archivedAt                 DateTime? @map("archived_at")
 
-  firm   Firm       @relation(fields: [firmId], references: [id])
-  links  FileLink[]
-  drafts Draft[]
+  firm                     Firm            @relation(fields: [firmId], references: [id])
+  case                     Case?           @relation(fields: [caseId], references: [id])
+  missingFromChecklistItem ChecklistItem?  @relation(fields: [missingFromChecklistItemId], references: [id])
+  links                    FileLink[]
+  drafts                   Draft[]
+  draftRevisions           DraftRevision[]
 
   @@index([firmId])
   @@index([firmId, documentType])
+  @@index([caseId])
+  @@index([firmId, category])
   @@map("files")
 }
 
@@ -190,33 +249,40 @@ model FileLink {
 // ─── DRAFTS ───────────────────────────────────────────────────────────────────
 // Formal deliverables from CounselWorks to the attorney.
 // Non-negotiable: delivered requires approved_by (enforced at DB and app layer).
-// label_text is fixed — enforced by DB CHECK constraint.
+// label_text is fixed — enforced by DB CHECK constraint and BEFORE UPDATE trigger.
 model Draft {
-  id            String    @id @default(uuid()) @db.Uuid
-  firmId        String    @map("firm_id") @db.Uuid
-  caseId        String    @map("case_id") @db.Uuid
-  requestId     String?   @map("request_id") @db.Uuid
-  fileId        String?   @map("file_id") @db.Uuid
-  draftType     String    @map("draft_type")
-  version       Int       @default(1)
-  status        String    @default("drafted")
-  labelText     String    @default("DRAFT — PREPARED FOR ATTORNEY REVIEW ONLY. NOT LEGAL ADVICE.") @map("label_text")
-  generatedByAi Boolean   @default(false) @map("generated_by_ai")
-  reviewedBy    String?   @map("reviewed_by") @db.Uuid
-  approvedBy    String?   @map("approved_by") @db.Uuid
-  notes         String?
-  createdAt     DateTime  @default(now()) @map("created_at")
-  deliveredAt   DateTime? @map("delivered_at")
-  archivedAt    DateTime? @map("archived_at")
+  id                 String    @id @default(uuid()) @db.Uuid
+  firmId             String    @map("firm_id") @db.Uuid
+  caseId             String    @map("case_id") @db.Uuid
+  requestId          String?   @map("request_id") @db.Uuid
+  fileId             String?   @map("file_id") @db.Uuid
+  draftType          String    @map("draft_type")
+  version            Int       @default(1)
+  status             String    @default("drafted")
+  labelText          String    @default("DRAFT — PREPARED FOR ATTORNEY REVIEW ONLY. NOT LEGAL ADVICE.") @map("label_text")
+  confidenceScore    Int?      @map("confidence_score")
+  disclaimerVariant  String?   @map("disclaimer_variant")
+  aiModelUsed        String?   @map("ai_model_used")
+  sourceDocuments    Json?     @map("source_documents")
+  generatedByAi      Boolean   @default(false) @map("generated_by_ai")
+  reviewedBy         String?   @map("reviewed_by") @db.Uuid
+  approvedBy         String?   @map("approved_by") @db.Uuid
+  notes              String?
+  createdAt          DateTime  @default(now()) @map("created_at")
+  deliveredAt        DateTime? @map("delivered_at")
+  archivedAt         DateTime? @map("archived_at")
 
-  firm    Firm     @relation(fields: [firmId], references: [id])
-  case    Case     @relation(fields: [caseId], references: [id])
-  request Request? @relation(fields: [requestId], references: [id])
-  file    File?    @relation(fields: [fileId], references: [id])
+  firm      Firm            @relation(fields: [firmId], references: [id])
+  case      Case            @relation(fields: [caseId], references: [id])
+  request   Request?        @relation(fields: [requestId], references: [id])
+  file      File?           @relation(fields: [fileId], references: [id])
+  revisions DraftRevision[]
+  qaReviews QAReview[]
 
   @@index([firmId])
   @@index([firmId, status])
   @@index([caseId])
+  @@index([firmId, status, createdAt])
   @@map("drafts")
 }
 
@@ -244,10 +310,269 @@ model ActivityLog {
 model RefreshToken {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
-  tokenHash String   @map("token_hash")   // bcrypt hash — never the raw token
+  tokenHash String   @map("token_hash")
   expiresAt DateTime @map("expires_at")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PORTAL DATA MODEL — added 2026-04-10 via 20260410120000_portal_data_model
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Canonical: SLAProfile (Prompt 2 spec §5.20)
+model SLAProfile {
+  id                  String    @id @default(uuid()) @db.Uuid
+  firmId              String    @map("firm_id") @db.Uuid
+  name                String
+  description         String?
+  threadResponseHrs   Int       @default(24) @map("thread_response_hrs")
+  draftTurnaroundHrs  Int       @default(72) @map("draft_turnaround_hrs")
+  urgentResponseHrs   Int       @default(4)  @map("urgent_response_hrs")
+  config              Json?
+  createdAt           DateTime  @default(now()) @map("created_at")
+  archivedAt          DateTime? @map("archived_at")
+
+  firm  Firm   @relation(fields: [firmId], references: [id])
+  cases Case[]
+
+  @@index([firmId])
+  @@map("sla_profiles")
+}
+
+// Canonical: Client (Prompt 2 spec §5.4)
+model Client {
+  id              String    @id @default(uuid()) @db.Uuid
+  firmId          String    @map("firm_id") @db.Uuid
+  fullName        String    @map("full_name")
+  email           String?
+  phone           String?
+  dateOfBirth     DateTime? @map("date_of_birth") @db.Date
+  dateOfIncident  DateTime? @map("date_of_incident") @db.Date
+  address         String?
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  archivedAt      DateTime? @map("archived_at")
+
+  firm  Firm   @relation(fields: [firmId], references: [id])
+  cases Case[]
+  leads Lead[]
+
+  @@index([firmId])
+  @@index([firmId, fullName])
+  @@map("clients")
+}
+
+// Canonical: CallLog (Prompt 2 spec §5.5)
+model CallLog {
+  id                  String    @id @default(uuid()) @db.Uuid
+  firmId              String    @map("firm_id") @db.Uuid
+  callerName          String?   @map("caller_name")
+  callerPhone         String?   @map("caller_phone")
+  callType            String    @default("inbound") @map("call_type")
+  outcome             String?
+  notes               String?
+  handledBy           String?   @map("handled_by") @db.Uuid
+  convertedToLeadId   String?   @map("converted_to_lead_id") @db.Uuid
+  calledAt            DateTime  @default(now()) @map("called_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  archivedAt          DateTime? @map("archived_at")
+
+  firm             Firm  @relation(fields: [firmId], references: [id])
+  convertedToLead  Lead? @relation(fields: [convertedToLeadId], references: [id])
+
+  @@index([firmId])
+  @@index([firmId, calledAt])
+  @@map("call_logs")
+}
+
+// Canonical: Lead (Prompt 2 spec §5.6a)
+model Lead {
+  id                 String    @id @default(uuid()) @db.Uuid
+  firmId             String    @map("firm_id") @db.Uuid
+  clientId           String?   @map("client_id") @db.Uuid
+  source             String?
+  stage              String    @default("new")
+  status             String    @default("open")
+  assignedTo         String?   @map("assigned_to") @db.Uuid
+  slaDueAt           DateTime? @map("sla_due_at")
+  lastContactAt      DateTime? @map("last_contact_at")
+  notes              String?
+  convertedToCaseId  String?   @map("converted_to_case_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at")
+  archivedAt         DateTime? @map("archived_at")
+
+  firm                  Firm      @relation(fields: [firmId], references: [id])
+  client                Client?   @relation(fields: [clientId], references: [id])
+  convertedToCase       Case?     @relation(fields: [convertedToCaseId], references: [id])
+  convertedFromCallLogs CallLog[]
+
+  @@index([firmId])
+  @@index([firmId, stage])
+  @@index([assignedTo])
+  @@map("leads")
+}
+
+// Canonical: HandoffEvent (Prompt 2 spec §5.9)
+model HandoffEvent {
+  id           String   @id @default(uuid()) @db.Uuid
+  firmId       String   @map("firm_id") @db.Uuid
+  caseId       String   @map("case_id") @db.Uuid
+  fromPhase    String?  @map("from_phase")
+  toPhase      String   @map("to_phase")
+  triggeredBy  String?  @map("triggered_by") @db.Uuid
+  reason       String?
+  metadata     Json?
+  occurredAt   DateTime @default(now()) @map("occurred_at")
+
+  firm Firm @relation(fields: [firmId], references: [id])
+  case Case @relation(fields: [caseId], references: [id])
+
+  @@index([firmId])
+  @@index([caseId, occurredAt])
+  @@map("handoff_events")
+}
+
+// Canonical: Task (Prompt 2 spec §5.10)
+model Task {
+  id           String    @id @default(uuid()) @db.Uuid
+  firmId       String    @map("firm_id") @db.Uuid
+  caseId       String?   @map("case_id") @db.Uuid
+  threadId     String?   @map("thread_id") @db.Uuid
+  title        String
+  description  String?
+  status       String    @default("open")
+  priority     String    @default("normal")
+  assignedTo   String?   @map("assigned_to") @db.Uuid
+  createdBy    String?   @map("created_by") @db.Uuid
+  dueAt        DateTime? @map("due_at")
+  completedAt  DateTime? @map("completed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  archivedAt   DateTime? @map("archived_at")
+
+  firm   Firm     @relation(fields: [firmId], references: [id])
+  case   Case?    @relation(fields: [caseId], references: [id])
+  thread Request? @relation(fields: [threadId], references: [id])
+
+  @@index([firmId])
+  @@index([firmId, status])
+  @@index([assignedTo, status])
+  @@index([firmId, dueAt])
+  @@map("tasks")
+}
+
+// Canonical: MedicalRecordRequest (Prompt 2 spec §5.12)
+model MedicalRecordRequest {
+  id                  String    @id @default(uuid()) @db.Uuid
+  firmId              String    @map("firm_id") @db.Uuid
+  caseId              String    @map("case_id") @db.Uuid
+  providerName        String    @map("provider_name")
+  providerAddress     String?   @map("provider_address")
+  recordsPeriodStart  DateTime? @map("records_period_start") @db.Date
+  recordsPeriodEnd    DateTime? @map("records_period_end")   @db.Date
+  status              String    @default("pending")
+  hitechLetterSentAt  DateTime? @map("hitech_letter_sent_at")
+  recordsReceivedAt   DateTime? @map("records_received_at")
+  costCents           Int?      @map("cost_cents")
+  notes               String?
+  createdAt           DateTime  @default(now()) @map("created_at")
+  archivedAt          DateTime? @map("archived_at")
+
+  firm Firm @relation(fields: [firmId], references: [id])
+  case Case @relation(fields: [caseId], references: [id])
+
+  @@index([firmId])
+  @@index([caseId])
+  @@index([firmId, status])
+  @@map("medical_record_requests")
+}
+
+// Canonical: ChecklistItem (Prompt 2 spec §5.13)
+model ChecklistItem {
+  id             String    @id @default(uuid()) @db.Uuid
+  firmId         String    @map("firm_id") @db.Uuid
+  caseId         String    @map("case_id") @db.Uuid
+  checklistType  String    @map("checklist_type")
+  label          String
+  description    String?
+  status         String    @default("pending")
+  required       Boolean   @default(true)
+  sortOrder      Int       @default(0) @map("sort_order")
+  dueAt          DateTime? @map("due_at")
+  completedAt    DateTime? @map("completed_at")
+  completedBy    String?   @map("completed_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+  archivedAt     DateTime? @map("archived_at")
+
+  firm         Firm   @relation(fields: [firmId], references: [id])
+  case         Case   @relation(fields: [caseId], references: [id])
+  missingFiles File[]
+
+  @@index([firmId])
+  @@index([caseId])
+  @@index([caseId, checklistType])
+  @@map("checklist_items")
+}
+
+// Canonical: DraftRevision (Prompt 2 spec §5.16)
+model DraftRevision {
+  id              String   @id @default(uuid()) @db.Uuid
+  draftId         String   @map("draft_id") @db.Uuid
+  version         Int
+  contentFileId   String?  @map("content_file_id") @db.Uuid
+  changeSummary   String?  @map("change_summary")
+  changedBy       String?  @map("changed_by") @db.Uuid
+  generatedByAi   Boolean  @default(false) @map("generated_by_ai")
+  confidenceScore Int?     @map("confidence_score")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  draft       Draft @relation(fields: [draftId], references: [id])
+  contentFile File? @relation(fields: [contentFileId], references: [id])
+
+  @@unique([draftId, version])
+  @@index([draftId])
+  @@map("draft_revisions")
+}
+
+// Canonical: QAReview (Prompt 2 spec §5.17)
+model QAReview {
+  id           String    @id @default(uuid()) @db.Uuid
+  draftId      String    @map("draft_id") @db.Uuid
+  reviewerId   String?   @map("reviewer_id") @db.Uuid
+  status       String    @default("pending")
+  notes        String?
+  checklist    Json?
+  startedAt    DateTime? @map("started_at")
+  completedAt  DateTime? @map("completed_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  draft Draft @relation(fields: [draftId], references: [id])
+
+  @@index([draftId])
+  @@index([status])
+  @@map("qa_reviews")
+}
+
+// Canonical: FirmAssignment (Prompt 2 spec §5.3)
+// Links a CounselWorks internal user (user_kind='cw') to a firm as a pod member.
+// Distinct from FirmMembership which stores firm-side user roles. user_kind='cw'
+// is enforced at the application layer, not the database.
+model FirmAssignment {
+  id            String    @id @default(uuid()) @db.Uuid
+  firmId        String    @map("firm_id") @db.Uuid
+  cwUserId      String    @map("cw_user_id") @db.Uuid
+  role          String
+  isPrimary     Boolean   @default(false) @map("is_primary")
+  assignedAt    DateTime  @default(now()) @map("assigned_at")
+  unassignedAt  DateTime? @map("unassigned_at")
+
+  firm   Firm @relation(fields: [firmId], references: [id])
+  cwUser User @relation(fields: [cwUserId], references: [id])
+
+  @@unique([firmId, cwUserId, role])
+  @@index([firmId])
+  @@index([cwUserId])
+  @@map("firm_assignments")
 }
