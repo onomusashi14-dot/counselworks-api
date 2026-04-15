@@ -32,16 +32,14 @@ const MEDICAL_TYPES = new Set(['medical_record', 'billing_record']);
 const ENTITY_TYPES = ['case', 'request', 'message'] as const;
 type EntityType = typeof ENTITY_TYPES[number];
 
-// ─── actorType derived from role — never hardcoded ───────────────────────────
+// ─── actorType derived from role — never hardcoded ───────────────────
 function actorTypeFromRole(role: string): 'attorney' | 'firm_staff' | 'counselworks_staff' {
   if (role === 'managing_attorney' || role === 'attorney') return 'attorney';
   if (role === 'firm_admin' || role === 'case_manager')    return 'firm_staff';
   return 'counselworks_staff';
 }
 
-// ─── FIRM ACCESS HELPER ───────────────────────────────────────────────────────
-// Used in routes that have no :firmId param (upload-url, confirm, url, delete).
-// Returns the user's role in the given firm, or null if no access.
+// ─── FIRM ACCESS HELPER ───────────────────────────────────────────────
 async function getUserRoleInFirm(
   userId: string,
   firmId: string
@@ -53,7 +51,6 @@ async function getUserRoleInFirm(
 
   if (membership && !membership.archivedAt) return membership.role;
 
-  // Check global admin access
   const globalAdmin = await prisma.firmMembership.findFirst({
     where: { userId, role: 'counselworks_admin', archivedAt: null },
     select: { role: true },
@@ -62,9 +59,7 @@ async function getUserRoleInFirm(
   return globalAdmin?.role ?? null;
 }
 
-// ─── ENTITY OWNERSHIP VALIDATION ─────────────────────────────────────────────
-// Verifies entity belongs to firmId before creating a file_link.
-// Non-negotiable: prevents cross-firm file linking.
+// ─── ENTITY OWNERSHIP VALIDATION ─────────────────────────────────
 async function verifyEntityBelongsToFirm(
   entityType: EntityType,
   entityId: string,
@@ -94,7 +89,7 @@ async function verifyEntityBelongsToFirm(
   return false;
 }
 
-// ─── SCHEMAS ──────────────────────────────────────────────────────────────────
+// ─── SCHEMAS ──────────────────────────────────────────────────────
 const UploadUrlSchema = z.object({
   firmId:       z.string().uuid(),
   entityType:   z.enum(ENTITY_TYPES),
@@ -113,8 +108,7 @@ const ConfirmSchema = z.object({
   entityType: z.enum(ENTITY_TYPES),
   entityId:   z.string().uuid(),
 }).strict();
-
-// ─── STEP 1: REQUEST PRESIGNED UPLOAD URL ────────────────────────────────────
+// ─── STEP 1: REQUEST PRESIGNED UPLOAD URL ────────────────────
 filesRouter.post(
   '/upload-url',
   authenticate,
@@ -185,7 +179,7 @@ filesRouter.post(
   }
 );
 
-// ─── STEP 3: CONFIRM UPLOAD COMPLETE ─────────────────────────────────────────
+// ─── STEP 3: CONFIRM UPLOAD COMPLETE ─────────────────────────
 filesRouter.post(
   '/:fileId/confirm',
   authenticate,
@@ -253,8 +247,7 @@ filesRouter.post(
       return;
     }
 
-    // ── FIX 1: Validate entity belongs to file's firm BEFORE creating fileLink ─
-    // This is the critical gap — prevents cross-firm file linking.
+    // FIX 1: Validate entity belongs to file's firm BEFORE creating fileLink
     const entityValid = await verifyEntityBelongsToFirm(entityType, entityId, file.firmId);
     if (!entityValid) {
       res.status(403).json({
@@ -286,7 +279,6 @@ filesRouter.post(
           id: true, firmId: true, originalName: true,
           mimeType: true, sizeBytes: true, documentType: true,
           status: true, reviewStatus: true, createdAt: true,
-          // storageKey intentionally excluded
         },
       }),
       prisma.fileLink.create({
@@ -313,8 +305,7 @@ filesRouter.post(
     });
   }
 );
-
-// ─── GET PRESIGNED DOWNLOAD/PREVIEW URL ──────────────────────────────────────
+// ─── GET PRESIGNED DOWNLOAD/PREVIEW URL ──────────────────
 filesRouter.get(
   '/:fileId/url',
   authenticate,
@@ -339,7 +330,7 @@ filesRouter.get(
       return;
     }
 
-    // Firm isolation — hard stop
+    // Firm isolation
     const role = await getUserRoleInFirm(req.user!.id, file.firmId);
     if (!role) {
       res.status(403).json({
@@ -349,12 +340,12 @@ filesRouter.get(
       return;
     }
 
-    // Medical record: log BEFORE generating URL — captures the attempt
+    // Medical record: log BEFORE generating URL
     if (MEDICAL_TYPES.has(file.documentType)) {
       await logActivity({
         firmId:       file.firmId,
         actorId:      req.user!.id,
-        actorType:    actorTypeFromRole(role),   // FIX 2: not hardcoded
+        actorType:    actorTypeFromRole(role),
         entityType:   'file',
         entityId:     file.id,
         activityType: 'medical_record_accessed',
@@ -378,77 +369,127 @@ filesRouter.get(
   }
 );
 
-// ─── FIX 3: LIST FILES — explicit firmId from query, not requireFirmAccess() ─
-// requireFirmAccess() requires :firmId in route params — this route has none.
-// firmId is validated from query param + user's membership instead.
+// ─── LIST FILES ────────────────────────────────────────────────────
+// Two modes:
+//   1. Firm-wide:  GET /api/files?firmId=xxx            → all ready files for firm
+//   2. Per-entity: GET /api/files?firmId=xxx&entityType=case&entityId=yyy
+// firmId is always required. entityType/entityId are optional — when omitted
+// the endpoint returns all files in the firm (Documents screen).
 filesRouter.get(
   '/',
   authenticate,
   async (req: Request, res: Response): Promise<void> => {
-    const { entityType, entityId, firmId } = req.query as {
-      entityType?: string;
-      entityId?: string;
-      firmId?: string;
-    };
+    try {
+      const { entityType, entityId, firmId } = req.query as {
+        entityType?: string;
+        entityId?: string;
+        firmId?: string;
+      };
 
-    if (!firmId || !entityType || !entityId || !ENTITY_TYPES.includes(entityType as EntityType)) {
-      res.status(400).json({
-        ok: false,
-        error: { code: 'BAD_REQUEST', message: 'firmId, entityType, and entityId query params are required.' },
-      });
-      return;
-    }
+      if (!firmId) {
+        res.status(400).json({
+          ok: false,
+          error: { code: 'BAD_REQUEST', message: 'firmId query param is required.' },
+        });
+        return;
+      }
 
-    // Validate user access to this firm
-    const role = await getUserRoleInFirm(req.user!.id, firmId);
-    if (!role) {
-      res.status(403).json({
-        ok: false,
-        error: { code: 'FORBIDDEN', message: 'You do not have access to this resource.' },
-      });
-      return;
-    }
+      // Validate user access to this firm
+      const role = await getUserRoleInFirm(req.user!.id, firmId);
+      if (!role) {
+        res.status(403).json({
+          ok: false,
+          error: { code: 'FORBIDDEN', message: 'You do not have access to this resource.' },
+        });
+        return;
+      }
 
-    // Validate entity belongs to this firm
-    const entityValid = await verifyEntityBelongsToFirm(entityType as EntityType, entityId, firmId);
-    if (!entityValid) {
-      res.status(403).json({
-        ok: false,
-        error: { code: 'FORBIDDEN', message: 'You do not have access to this resource.' },
-      });
-      return;
-    }
+      // Per-entity mode (original behaviour)
+      if (entityType && entityId) {
+        if (!ENTITY_TYPES.includes(entityType as EntityType)) {
+          res.status(400).json({
+            ok: false,
+            error: { code: 'BAD_REQUEST', message: 'entityType must be one of: case, request, message.' },
+          });
+          return;
+        }
 
-    const links = await prisma.fileLink.findMany({
-      where: { firmId, entityType, entityId },
-      include: {
-        file: {
-          select: {
-            id: true, originalName: true, mimeType: true,
-            sizeBytes: true, documentType: true,
-            status: true, reviewStatus: true,
-            createdAt: true, uploadedBy: true,
-            // storageKey intentionally excluded
+        const entityValid = await verifyEntityBelongsToFirm(entityType as EntityType, entityId, firmId);
+        if (!entityValid) {
+          res.status(403).json({
+            ok: false,
+            error: { code: 'FORBIDDEN', message: 'You do not have access to this resource.' },
+          });
+          return;
+        }
+
+        const links = await prisma.fileLink.findMany({
+          where: { firmId, entityType, entityId },
+          include: {
+            file: {
+              select: {
+                id: true, originalName: true, mimeType: true,
+                sizeBytes: true, documentType: true,
+                status: true, reviewStatus: true,
+                createdAt: true, uploadedBy: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        const files = links
+          .filter(l => l.file.status === 'ready')
+          .map(l => ({
+            ...l.file,
+            sizeBytes: l.file.sizeBytes.toString(),
+            linkId:    l.id,
+            linkedAt:  l.createdAt,
+          }));
+
+        res.status(200).json({ ok: true, data: { files } });
+        return;
+      }
+
+      // Firm-wide mode (Documents screen)
+      const firmFiles = await prisma.file.findMany({
+        where: { firmId, status: 'ready', archivedAt: null },
+        select: {
+          id: true, originalName: true, mimeType: true,
+          sizeBytes: true, documentType: true,
+          status: true, reviewStatus: true,
+          createdAt: true, uploadedBy: true,
+          links: {
+            select: { id: true, entityType: true, entityId: true, createdAt: true },
+            take: 1,
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      });
 
-    const files = links
-      .filter(l => l.file.status === 'ready')
-      .map(l => ({
-        ...l.file,
-        sizeBytes: l.file.sizeBytes.toString(),
-        linkId:    l.id,
-        linkedAt:  l.createdAt,
+      const files = firmFiles.map(f => ({
+        ...f,
+        sizeBytes: f.sizeBytes.toString(),
+        linkId:    f.links[0]?.id ?? null,
+        linkedAt:  f.links[0]?.createdAt ?? f.createdAt,
+        entityType: f.links[0]?.entityType ?? null,
+        entityId:   f.links[0]?.entityId ?? null,
+        links: undefined,
       }));
 
-    res.status(200).json({ ok: true, data: { files } });
+      res.status(200).json({ ok: true, data: { files } });
+    } catch (err) {
+      console.error('[FILES LIST]', err);
+      res.status(500).json({
+        ok: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Failed to list files.' },
+      });
+    }
   }
 );
 
-// ─── SOFT DELETE ──────────────────────────────────────────────────────────────
+// ─── SOFT DELETE ──────────────────────────────────────────────────
 filesRouter.delete(
   '/:fileId',
   authenticate,
@@ -498,7 +539,7 @@ filesRouter.delete(
     await logActivity({
       firmId:       file.firmId,
       actorId:      req.user!.id,
-      actorType:    actorTypeFromRole(role),   // FIX 2: derived from role
+      actorType:    actorTypeFromRole(role),
       entityType:   'file',
       entityId:     file.id,
       activityType: 'file_archived',
