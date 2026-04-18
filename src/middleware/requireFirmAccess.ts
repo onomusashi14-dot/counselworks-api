@@ -29,7 +29,7 @@ export function requireFirmAccess(firmIdParam = 'firmId') {
       return;
     }
 
-    const firmId = req.params[firmIdParam];
+    let firmId = req.params[firmIdParam];
 
     if (!firmId) {
       res.status(400).json({
@@ -37,6 +37,25 @@ export function requireFirmAccess(firmIdParam = 'firmId') {
         error: { code: 'BAD_REQUEST', message: 'Firm ID is required.' },
       });
       return;
+    }
+
+    // Resolve "me" to the authenticated user's primary firm. Frontend uses
+    // /firms/me/... as a "current user" shortcut so it doesn't need to know
+    // the firmId before mounting routes.
+    if (firmId === 'me') {
+      const primary = await prisma.firmMembership.findFirst({
+        where: { userId: req.user.id, archivedAt: null },
+        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+        select: { firmId: true },
+      });
+      if (!primary) {
+        res.status(403).json({
+          ok: false,
+          error: { code: 'FORBIDDEN', message: 'You do not have access to this resource.' },
+        });
+        return;
+      }
+      firmId = primary.firmId;
     }
 
     // Verify firm exists and is not archived
