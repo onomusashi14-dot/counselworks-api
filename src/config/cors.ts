@@ -13,6 +13,7 @@ const DEV_DEFAULTS = [
 const PROD_DEFAULTS = [
   'https://app.counselintake.com',
   'https://counselintake.com',
+  'https://counselworks-os-6ptq-hm82zwget-onomusashi14-dots-projects.vercel.app',
 ];
 
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
