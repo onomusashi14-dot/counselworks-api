@@ -22,6 +22,9 @@ import { runThreadAutoClose } from './thread-autoclose.service';
 import { runSLACheck } from './sla.service';
 
 const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const STARTUP_DELAY_MS = 30 * 1000; // 30 seconds — let the app warm up and serve
+                                    // early user requests before the scheduler
+                                    // claims connections from the Prisma pool
 
 let running = false;
 
@@ -60,11 +63,15 @@ async function runAllJobs(): Promise<void> {
 }
 
 export function startScheduler(): void {
-  // Kick once on boot so a freshly deployed instance reflects current state
-  // without waiting 15 minutes.
-  runAllJobs().catch((err) => console.error('[scheduler] initial run failed', err));
+  // Delay the first tick so the app can accept user traffic before the
+  // scheduler's ~concurrent queries saturate the Prisma pool on a cold start.
+  setTimeout(() => {
+    runAllJobs().catch((err) => console.error('[scheduler] initial run failed', err));
+  }, STARTUP_DELAY_MS);
   setInterval(() => {
     runAllJobs().catch((err) => console.error('[scheduler] interval run failed', err));
   }, INTERVAL_MS);
-  console.log(`[scheduler] started — runs every ${INTERVAL_MS / 60_000} minutes`);
+  console.log(
+    `[scheduler] started — first tick in ${STARTUP_DELAY_MS / 1000}s, then every ${INTERVAL_MS / 60_000} minutes`
+  );
 }
