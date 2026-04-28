@@ -6,11 +6,10 @@ import { authRouter } from './modules/auth/auth.router';
 import { firmsRouter } from './modules/firms/firms.router';
 import { casesRouter } from './modules/cases/cases.router';
 import { requestsRouter } from './modules/requests/requests.router';
+import { leadsRouter } from './modules/requests/leads.router';
 import { notificationsRouter } from './modules/notifications/notifications.router';
 import { filesRouter } from './modules/files/files.router';
 import { draftsRouter } from './modules/drafts/drafts.router';
-import { portalRouter } from './modules/portal/portal.router';
-import { aiRouter } from './modules/ai/ai.router';
 
 export function createApp() {
   const app = express();
@@ -32,9 +31,8 @@ export function createApp() {
   app.use('/firms', firmsRouter);
   app.use('/firms/:firmId/cases', casesRouter);
   app.use('/firms/:firmId/requests', requestsRouter);
+  app.use('/firms/:firmId/leads', leadsRouter);
   app.use('/firms/:firmId/drafts', draftsRouter);
-  app.use('/firms/:firmId/portal', portalRouter);
-  app.use('/firms/:firmId/ai', aiRouter);
   app.use('/notifications', notificationsRouter);
   app.use('/api/files', filesRouter);
 

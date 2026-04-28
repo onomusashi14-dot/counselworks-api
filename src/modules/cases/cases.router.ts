@@ -24,7 +24,7 @@ import { logActivity } from '../../utils/auditLog';
 
 export const casesRouter = Router({ mergeParams: true });
 
-// ─── VALID VALUES ─────────────────────────────────────────────────────────────────
+// ─── VALID VALUES ─────────────────────────────────────────────────────────────
 const PHASES = [
   'intake','administration','records_collection',
   'demand_prep','negotiation','litigation_prep','litigation','resolved',
@@ -33,7 +33,7 @@ const PHASES = [
 const STATUSES = ['active','on_hold','closed','settled','archived'] as const;
 const PRIORITIES = ['normal','high','urgent'] as const;
 
-// ─── VALIDATION SCHEMAS ─────────────────────────────────────────────────────────
+// ─── VALIDATION SCHEMAS ───────────────────────────────────────────────────────
 const CaseUpdateSchema = z.object({
   phase:    z.enum(PHASES).optional(),
   status:   z.enum(STATUSES).optional(),
@@ -85,7 +85,7 @@ casesRouter.get(
         ...(priority ? { priority } : {}),
       };
 
-      const [cases, total] = await Promise.all([
+      const [rawCases, total] = await Promise.all([
         prisma.case.findMany({
           where,
           select: {
@@ -112,6 +112,28 @@ casesRouter.get(
         }),
         prisma.case.count({ where }),
       ]);
+
+      // Resolve attorney names from UUIDs (batch lookup)
+      const attorneyIds = [...new Set(
+        rawCases.map((c) => c.primaryAttorneyId).filter(Boolean) as string[]
+      )];
+      const attorneyMap = new Map<string, { fullName: string; email: string }>();
+      if (attorneyIds.length > 0) {
+        const users = await prisma.user.findMany({
+          where: { id: { in: attorneyIds } },
+          select: { id: true, fullName: true, email: true },
+        });
+        for (const u of users) {
+          attorneyMap.set(u.id, { fullName: u.fullName, email: u.email });
+        }
+      }
+
+      const cases = rawCases.map((c) => ({
+        ...c,
+        primaryAttorney: c.primaryAttorneyId
+          ? attorneyMap.get(c.primaryAttorneyId) ?? null
+          : null,
+      }));
 
       res.status(200).json({
         ok: true,
@@ -176,7 +198,20 @@ casesRouter.get(
         ipAddress: req.ip,
       });
 
-      res.status(200).json({ ok: true, data: { case: caseRecord } });
+      // Resolve attorney name
+      let primaryAttorney: { fullName: string; email: string } | null = null;
+      if (caseRecord.primaryAttorneyId) {
+        const attorney = await prisma.user.findUnique({
+          where: { id: caseRecord.primaryAttorneyId },
+          select: { fullName: true, email: true },
+        });
+        primaryAttorney = attorney ?? null;
+      }
+
+      res.status(200).json({
+        ok: true,
+        data: { case: { ...caseRecord, primaryAttorney } },
+      });
     } catch (err) {
       console.error('[CASE DETAIL]', err);
       res.status(500).json({
