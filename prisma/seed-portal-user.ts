@@ -255,6 +255,56 @@ async function main() {
   }
   console.log(`   Created ${fileCount} file(s) with case links`);
 
+  // ─── STEP 7: Seed demo leads (clients + leads) ──────────────────────
+  console.log('7. Seeding demo leads...');
+
+  const demoLeads = [
+    { fullName: 'Marcus Webb',  email: 'marcus.webb@email.com',  phone: '555-0101', status: 'open',        source: 'web_form'  },
+    { fullName: 'Linda Okafor', email: 'linda.okafor@email.com', phone: '555-0102', status: 'in_progress', source: 'referral'  },
+    { fullName: 'Derek Hsu',    email: 'derek.hsu@email.com',    phone: '555-0103', status: 'open',        source: 'phone'     },
+    { fullName: 'Priya Nair',   email: 'priya.nair@email.com',   phone: '555-0104', status: 'completed',   source: 'web_form'  },
+  ];
+
+  let leadCount = 0;
+  for (const dl of demoLeads) {
+    // Upsert client by email (within firm scope)
+    const existingClient = await prisma.client.findFirst({
+      where: { firmId: FIRM_A_ID, email: dl.email },
+    });
+
+    const client = existingClient ?? await prisma.client.create({
+      data: {
+        firmId:   FIRM_A_ID,
+        fullName: dl.fullName,
+        email:    dl.email,
+        phone:    dl.phone,
+      },
+    });
+
+    // Check if a lead already exists for this client in this firm
+    const existingLead = await prisma.lead.findFirst({
+      where: { firmId: FIRM_A_ID, clientId: client.id },
+    });
+
+    if (!existingLead) {
+      await prisma.lead.create({
+        data: {
+          firmId:            FIRM_A_ID,
+          clientId:          client.id,
+          source:            dl.source,
+          stage:             'new',
+          status:            dl.status,
+          convertedToCaseId: null,
+          notes:             null,
+        },
+      });
+      leadCount++;
+    } else {
+      console.log(`   Lead for ${dl.fullName} already exists, skipping.`);
+    }
+  }
+  console.log(`   Created ${leadCount} new lead(s)`);
+
   // ─── DONE ────────────────────────────────────────────────────────────
   console.log('\n  Portal user seeded successfully.\n');
   console.log('   Login credentials:');

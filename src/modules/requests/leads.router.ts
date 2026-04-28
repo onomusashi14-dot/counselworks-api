@@ -1,12 +1,12 @@
 /**
  * src/modules/requests/leads.router.ts
  *
- * Leads = Requests that have NOT been linked to a case yet (caseId IS NULL).
- * These represent pre-case intake — potential clients who haven't been converted.
+ * Leads represent potential clients who haven't been converted to cases yet.
+ * Uses the Lead model (linked to Client for contact info).
  *
  * Routes:
- *   GET  /firms/:firmId/leads              List leads (requests with no caseId)
- *   GET  /firms/:firmId/leads/:leadId      Lead detail (same as request detail)
+ *   GET  /firms/:firmId/leads              List leads
+ *   GET  /firms/:firmId/leads/:leadId      Lead detail
  */
 
 import { Router, Request, Response } from 'express';
@@ -15,8 +15,6 @@ import { authenticate } from '../../middleware/authenticate';
 import { requireFirmAccess } from '../../middleware/requireFirmAccess';
 
 export const leadsRouter = Router({ mergeParams: true });
-
-const LEAD_STATUSES = ['open', 'in_progress', 'pending_attorney', 'completed', 'closed'] as const;
 
 // ─── LIST LEADS ──────────────────────────────────────────────────────────────
 leadsRouter.get(
@@ -31,41 +29,52 @@ leadsRouter.get(
     const skip  = (page - 1) * limit;
 
     const statusFilter = req.query.status as string | undefined;
-    const validStatus  = LEAD_STATUSES.includes(statusFilter as any) ? statusFilter : undefined;
 
     const where = {
       firmId,
-      caseId: null,  // Leads = requests not yet linked to a case
-      ...(validStatus ? { status: validStatus } : {}),
+      archivedAt: null,
+      ...(statusFilter ? { status: statusFilter } : {}),
     };
 
     const [leads, total] = await Promise.all([
-      prisma.request.findMany({
+      prisma.lead.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
-        select: {
-          id:          true,
-          firmId:      true,
-          caseId:      true,
-          createdBy:   true,
-          assignedTo:  true,
-          subject:     true,
-          requestType: true,
-          status:      true,
-          slaDueAt:    true,
-          eta:         true,
-          createdAt:   true,
-          closedAt:    true,
+        include: {
+          client: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+              phone: true,
+            },
+          },
         },
       }),
-      prisma.request.count({ where }),
+      prisma.lead.count({ where }),
     ]);
+
+    // Flatten client info onto lead for frontend consumption
+    const result = leads.map((l) => ({
+      id: l.id,
+      firmId: l.firmId,
+      clientName: l.client?.fullName ?? null,
+      email: l.client?.email ?? null,
+      phone: l.client?.phone ?? null,
+      source: l.source,
+      stage: l.stage,
+      status: l.status,
+      assignedTo: l.assignedTo,
+      convertedToCaseId: l.convertedToCaseId,
+      notes: l.notes,
+      createdAt: l.createdAt,
+    }));
 
     res.status(200).json({
       ok: true,
-      data: { leads },
+      data: { leads: result },
       meta: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   }
@@ -80,30 +89,15 @@ leadsRouter.get(
     const { firmId } = req.firmContext!;
     const { leadId } = req.params;
 
-    const lead = await prisma.request.findFirst({
-      where: { id: leadId, firmId, caseId: null },
-      select: {
-        id:          true,
-        firmId:      true,
-        caseId:      true,
-        createdBy:   true,
-        assignedTo:  true,
-        subject:     true,
-        requestType: true,
-        status:      true,
-        slaDueAt:    true,
-        eta:         true,
-        createdAt:   true,
-        closedAt:    true,
-        messages: {
-          orderBy: { createdAt: 'asc' },
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, firmId, archivedAt: null },
+      include: {
+        client: {
           select: {
-            id:             true,
-            senderId:       true,
-            senderType:     true,
-            body:           true,
-            isDraftDelivery: true,
-            createdAt:      true,
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
           },
         },
       },
@@ -117,6 +111,21 @@ leadsRouter.get(
       return;
     }
 
-    res.status(200).json({ ok: true, data: { lead } });
+    const result = {
+      id: lead.id,
+      firmId: lead.firmId,
+      clientName: lead.client?.fullName ?? null,
+      email: lead.client?.email ?? null,
+      phone: lead.client?.phone ?? null,
+      source: lead.source,
+      stage: lead.stage,
+      status: lead.status,
+      assignedTo: lead.assignedTo,
+      convertedToCaseId: lead.convertedToCaseId,
+      notes: lead.notes,
+      createdAt: lead.createdAt,
+    };
+
+    res.status(200).json({ ok: true, data: { lead: result } });
   }
 );
