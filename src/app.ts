@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { corsConfig } from './config/cors';
@@ -15,11 +16,22 @@ export function createApp() {
   const app = express();
 
   app.set('trust proxy', 1);
+  app.use(compression());
   app.use(helmet());
   app.use(corsConfig);
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false }));
   app.use(cookieParser());
+
+  // Cache headers: 30s browser cache for GET, no-store for mutations
+  app.use((req, res, next) => {
+    if (req.method === 'GET') {
+      res.set('Cache-Control', 'private, max-age=30');
+    } else {
+      res.set('Cache-Control', 'no-store');
+    }
+    next();
+  });
 
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
