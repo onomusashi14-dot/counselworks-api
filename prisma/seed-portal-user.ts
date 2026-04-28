@@ -23,7 +23,7 @@ const prisma = new PrismaClient();
 
 // ─── CONFIG ──────────────────────────────────────────────────────────
 const PORTAL_EMAIL    = 'james@counselworks.com';
-const PORTAL_PASSWORD = 'CW-demo-2024!';
+const PORTAL_PASSWORD = 'CW-Demo-2026!';
 const PORTAL_NAME     = 'James Mitchell';
 const PORTAL_ROLE     = 'managing_attorney';
 const FIRM_A_ID       = '11111111-1111-1111-1111-111111111111';
