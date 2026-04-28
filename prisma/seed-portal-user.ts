@@ -160,7 +160,7 @@ async function main() {
   // ─── STEP 6: Seed demo documents (files + file_links) ──────────
   console.log('6. Seeding demo documents...');
 
-  const CASE_A1_ID = '44444444-4444-4444-4444-444444444444';
+  const CASE_A1_ID = '20000000-0000-0000-0000-000000000001'; // portal case c1 (Martinez)
   const CASE_A2_ID = '55555555-5555-5555-5555-555555555555';
 
   const demoFiles = [

@@ -121,7 +121,7 @@ async function main() {
       id: CASE_A1_ID,
       firmId: FIRM_A_ID,
       matterNumber: 'CW-2024-0001',
-      clientName: 'Elena Martinez',
+      clientName: 'Sofia Reyes',
       caseType: 'auto_bi',
       jurisdiction: 'CA',
       phase: 'records_collection',
